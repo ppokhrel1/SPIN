@@ -4,3 +4,5 @@ from .configs import DataArguments, SPINConfig, H4ArgumentParser, ModelArguments
 from .data import apply_chat_template, get_datasets
 from .model_utils import get_kbit_device_map, get_peft_config, get_quantization_config, get_tokenizer, is_adapter_model
 from .trainer import SPINTrainer
+from .modified_trainer import AdaptiveSPINTrainer
+
