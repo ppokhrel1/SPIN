@@ -378,7 +378,6 @@ class AdaptiveSPINTrainer(Trainer):
                         input_ids      = input_ids,
                         attention_mask = attention_mask,
                         output_hidden_states = True,
-                        use_cache=False,              # saves memory
                     )
                 hs = outputs.hidden_states[-1]
                     
