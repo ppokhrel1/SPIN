@@ -562,6 +562,9 @@ class AdaptiveSPINTrainer(Trainer):
         if self.current_step < self.spinup_steps and not hasattr(self, '_spinup_complete'):
             self.train_spinup(self.train_dataset)
             self._spinup_complete = True
+
+        if self.state.global_step % 20 == 0:
+            torch.cuda.empty_cache()
         
         loss = super().training_step(model, inputs)
         self.current_step += 1

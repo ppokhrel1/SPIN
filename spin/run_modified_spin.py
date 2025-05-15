@@ -200,7 +200,7 @@ def main():
             logging_steps=10,
             remove_unused_columns=False,
             gradient_accumulation_steps=4,
-            gradient_checkpointing=True,
+            #gradient_checkpointing=True,
         ),
         beta=0.1,
         spinup_steps=2,
