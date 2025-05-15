@@ -132,7 +132,7 @@ class AdaptiveSPINModel(PreTrainedModel):
         return modeling_outputs.CausalLMOutputWithPast(
             logits=outputs.logits,
             past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states if output_hidden_states else None,
+            hidden_states=True,
         )
 
     def _update_scale(self, h, s_prior):
