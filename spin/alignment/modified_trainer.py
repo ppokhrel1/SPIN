@@ -106,8 +106,7 @@ class AdaptiveSPINModel(PreTrainedModel):
         self.register_buffer('current_scale', self.s0.clone())
         self.register_buffer('best_scale', self.s0.clone())
 
-    def forward(self, input_ids, attention_mask=None, output_hidden_states=False, return_dict=False):
-        def forward(
+    def forward(
         self,
         input_ids,
         attention_mask=None,
