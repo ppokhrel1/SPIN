@@ -555,11 +555,11 @@ class AdaptiveSPINTrainer(Trainer):
 
     def training_step(self, model, inputs, num_items_in_batch=None):
         """Override training step to include spin-up if needed."""
-        self.model.cpu()
+        #self.model.cpu()
         if self.current_step < self.spinup_steps and not hasattr(self, '_spinup_complete'):
             self.train_spinup(self.train_dataset)
             self._spinup_complete = True
-        self.model.cuda()
+        #self.model.cuda()
         loss = super().training_step(model, inputs)
         self.current_step += 1
         return loss
