@@ -400,7 +400,7 @@ class AdaptiveSPINTrainer(Trainer):
                 for t in range(1, h_seq.size(0)):
                     h_prev = h_seq[t-1]                         # [D]
                     # transition_net lives on the same device, so this yields [D]
-                    s_t = self.transition_net(s_prev, h_prev)
+                    s_t = self.model.transition_net(s_prev, h_prev)
                     sequences.append(s_t)                  # [D]
                     s_prev = s_t       
                 s_seq = torch.stack(sequences)
@@ -408,7 +408,7 @@ class AdaptiveSPINTrainer(Trainer):
                 # Compute losses
                 scaled_h = h_seq * s_seq
                 state_loss = ((scaled_h - h_next).pow(2) / self.model.R.exp()).mean()
-                dyn_loss = ((s_seq[1:] - self.transition_net(s_seq[:-1], h_seq[:-1])).pow(2) / self.model.Q.exp()).mean()
+                dyn_loss = ((s_seq[1:] - self.model.transition_net(s_seq[:-1], h_seq[:-1])).pow(2) / self.model.Q.exp()).mean()
                 
                 loss = state_loss + dyn_loss
                 loss.backward()
@@ -448,7 +448,7 @@ class AdaptiveSPINTrainer(Trainer):
             
             # Update scale for next step
             if t < hs.size(1) - 1:
-                s_prior = self.transition_net(s, h_t)
+                s_prior = self.model.transition_net(s, h_t)
                 s = self._update_scale(h_t, s_prior)
         
         # Update class state
@@ -494,7 +494,7 @@ class AdaptiveSPINTrainer(Trainer):
                 next_h = next_output.hidden_states[-1][:, -1, :]
                 
                 # Predict next scale
-                next_s = self.transition_net(s_prior, h)
+                next_s = self.model.transition_net(s_prior, h)
                 candidates.append(next_s)
         
         return torch.stack(candidates)
