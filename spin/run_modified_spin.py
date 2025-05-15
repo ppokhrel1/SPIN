@@ -7,6 +7,7 @@ import sys
 import torch
 import transformers
 from transformers import AutoModelForCausalLM, set_seed
+#from models.adaptive_spin_model import AdaptiveSPINModel
 
 from transformers import (
     AutoConfig,
@@ -15,7 +16,7 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizerBase,
     Trainer,
-    TrainingArguments,
+    TrainingArguments
 )
 
 from accelerate import Accelerator
@@ -30,6 +31,7 @@ from alignment import (
     get_quantization_config,
     get_tokenizer,
     is_adapter_model,
+    AdaptiveSPINModel
 )
 from peft import PeftConfig, PeftModel
 from alignment import AdaptiveSPINTrainer
@@ -173,6 +175,10 @@ def main():
     #    peft_config=get_peft_config(model_args),
     #)
     model = model_args.model_name_or_path
+    base_model = AutoModelForCausalLM.from_pretrained(model)
+    model = AdaptiveSPINModel(base_model)
+
+
     spin_trainer = AdaptiveSPINTrainer(
         model=model,
         args=TrainingArguments(
@@ -184,7 +190,7 @@ def main():
         ),
         beta=0.1,
         spinup_steps=500,
-        scaling_rank=64
+        #scaling_rank=64
     )
 
     ###############
