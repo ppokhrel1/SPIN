@@ -353,9 +353,9 @@ class AdaptiveSPINTrainer(Trainer):
         """Configure optimizer with scaling parameters."""
         pass
 
-    def train_spinup(self, dataset, window_size: int = 128):
-        """Initialize scaling dynamics before main training, in manageable windows."""
-        logger.info(f"Starting spin-up in windows of {window_size} tokens (total steps={self.spinup_steps})")
+    def train_spinup(self, dataset):
+        """Initialize scaling dynamics before main training."""
+        logger.info(f"Starting spin-up phase for {self.spinup_steps} steps")
         
         spinup_optimizer = torch.optim.Adam([
             {'params': [self.model.s0, self.model.Q, self.model.R], 'lr': 1e-3},
@@ -369,68 +369,64 @@ class AdaptiveSPINTrainer(Trainer):
         
         for step in range(self.spinup_steps):
             total_loss = 0.0
-            
             for batch in self.get_train_dataloader():
                 inputs = self._prepare_inputs(batch)
-                input_ids = inputs["real_input_ids"]
+                
+                input_ids      = inputs.get("real_input_ids")
                 attention_mask = inputs.get("real_attention_mask", None)
-
+                print("spin‑up inputs:", inputs.keys())
                 with torch.no_grad():
-                    # get all hidden states but don’t flatten
-                    outputs = self.model.wrapped_model(
-                        input_ids=input_ids,
-                        attention_mask=attention_mask,
-                        output_hidden_states=True,
-                        return_dict=True
+                    #outputs = self.model(**inputs, output_hidden_states=True)
+                    outputs = self.model(
+                        input_ids      = input_ids,
+                        attention_mask = attention_mask,
+                        output_hidden_states = True,
+                        return_dict=True,
                     )
-                hs = outputs.hidden_states[-1]  # [bsz, seq_len, dim]
+                hs = outputs.hidden_states[-1]
+                    
+                del outputs.hidden_states
+                # Process hidden states
+                device = self.model.s0.device
+                h_seq = hs[:, :-1].flatten(0, 1).to(device)  # (seq_len-1)*bsz x dim
+                h_next = hs[:, 1:].flatten(0, 1).to(device)
+                #hs = hs.to(device)
+                #print(hs.shape)
+                #_, T, D = hs.shape
+                # Initialize scale sequence
+                sequences = []
                 
-                bsz, seq_len, dim = hs.size()
-                device = hs.device
-
-                # reset gradients on spin‐up modules
-                spinup_optimizer.zero_grad()
+                s_seq = self.model.s0.unsqueeze(0).expand(h_seq.size(0), -1).to(device)
                 
-                # iterate over windows of length window_size
-                for start in range(0, seq_len-1, window_size):
-                    end = min(seq_len, start + window_size + 1)
-                    h_chunk = hs[:, start:end, :].to(device)  # includes extra token for h_next
-                    # flatten only this window
-                    h_prev = h_chunk[:, :-1, :].reshape(-1, dim)
-                    h_next = h_chunk[:, 1:, :].reshape(-1, dim)
-                    
-                    # initialize scale for this window
-                    s_prev = self.model.s0.unsqueeze(0).expand(h_prev.size(0), -1).to(device)
-                    seq = [s_prev]
-                    
-                    # build predicted scales for window
-                    for i in range(1, h_prev.size(0)):
-                        s_t = self.model.transition_net(seq[-1], h_prev[i-1])
-                        seq.append(s_t)
-                    s_seq = torch.stack(seq)  # [window_tokens, dim]
-                    
-                    # compute window losses
-                    scaled_h = h_prev * s_seq
-                    state_loss = ((scaled_h - h_next)**2 / self.model.R.exp()).mean()
-                    dyn_loss = ((s_seq[1:] - self.model.transition_net(s_seq[:-1], h_prev[:-1]))**2 / self.model.Q.exp()).mean()
-                    loss = state_loss + dyn_loss
-                    
-                    # accumulate
-                    loss.backward()
-                    total_loss += loss.item()
+                s_prev = s_seq[0]
+                sequences.append(s_prev)
                 
-                # step optimizer after all windows in this batch
+                # 2) iterate over the flattened hidden states
+                for t in range(1, h_seq.size(0)):
+                    h_prev = h_seq[t-1]                         # [D]
+                    # transition_net lives on the same device, so this yields [D]
+                    s_t = self.model.transition_net(s_prev, h_prev)
+                    sequences.append(s_t)                  # [D]
+                    s_prev = s_t       
+                s_seq = torch.stack(sequences)
+                
+                # Compute losses
+                scaled_h = h_seq * s_seq
+                state_loss = ((scaled_h - h_next).pow(2) / self.model.R.exp()).mean()
+                dyn_loss = ((s_seq[1:] - self.model.transition_net(s_seq[:-1], h_seq[:-1])).pow(2) / self.model.Q.exp()).mean()
+                
+                loss = state_loss + dyn_loss
+                loss.backward()
                 spinup_optimizer.step()
+                spinup_optimizer.zero_grad()
+                total_loss += loss.item()
             
-            if step % 50 == 0:
-                avg = total_loss / len(self.get_train_dataloader())
-                logger.info(f"Spin‑up step {step}: avg_loss_per_batch={avg:.4f}")
+            if step % 100 == 0:
+                logger.info(f"Spin-up step {step}: loss={total_loss/len(dataset):.4f}")
         
-        logger.info("Spin‑up phase completed")
-        # reset running scales
+        logger.info("Spin-up phase completed")
         self.current_scale = self.model.s0.clone()
-        self.best_scale    = self.model.s0.clone()
-
+        self.best_scale = self.model.s0.clone()
 
     def scaled_forward(self, input_ids, attention_mask=None):
         """Forward pass with adaptive scaling dynamics."""
