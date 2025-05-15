@@ -106,11 +106,12 @@ class AdaptiveSPINModel(PreTrainedModel):
         self.register_buffer('current_scale', self.s0.clone())
         self.register_buffer('best_scale', self.s0.clone())
 
-    def forward(self, input_ids, attention_mask=None, output_hidden_states=False,):
+    def forward(self, input_ids, attention_mask=None, output_hidden_states=False, return_dict=False):
         outputs = self.wrapped_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            output_hidden_states=True
+            output_hidden_states=True,
+            return_dict=return_dict
         )
         
         hs = outputs.hidden_states[-1]
