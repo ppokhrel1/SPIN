@@ -199,7 +199,6 @@ def main():
             learning_rate=1e-5,
             logging_steps=10,
             remove_unused_columns=False,
-            gradient_checkpointing=True,
         ),
         beta=0.1,
         spinup_steps=2,
