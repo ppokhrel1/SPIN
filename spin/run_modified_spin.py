@@ -185,6 +185,8 @@ def main():
     #)
     model = model_args.model_name_or_path
     base_model = AutoModelForCausalLM.from_pretrained(model)
+    base_model.gradient_checkpointing_enable()
+
     model = AdaptiveSPINModel(base_model)
 
 
@@ -197,6 +199,7 @@ def main():
             learning_rate=1e-5,
             logging_steps=10,
             remove_unused_columns=False,
+            gradient_checkpointing=True,
         ),
         beta=0.1,
         spinup_steps=2,
