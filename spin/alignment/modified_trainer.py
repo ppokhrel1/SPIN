@@ -113,7 +113,7 @@ class AdaptiveSPINModel(PreTrainedModel):
             output_hidden_states=True
         )
         
-        hs = outputs.hidden_states[-1]
+        hs = outputs.last_hidden_state
         batch_size = hs.size(0)
         s = self.current_scale.unsqueeze(0).expand(batch_size, -1).to(hs.device)
         scaled_states = []
@@ -379,7 +379,7 @@ class AdaptiveSPINTrainer(Trainer):
                         attention_mask = attention_mask,
                         output_hidden_states = True,
                     )
-                    hs = outputs.hidden_states[-1]
+                    hs = outputs.last_hidden_state
                 
                 # Process hidden states
                 device = self.model.s0.device
@@ -431,7 +431,7 @@ class AdaptiveSPINTrainer(Trainer):
             output_hidden_states=True
         )
         #input_embeds
-        hs = outputs.hidden_states[-1]
+        hs = outputs.last_hidden_state
         
         # Initialize scaling
         batch_size = hs.size(0)
@@ -555,10 +555,11 @@ class AdaptiveSPINTrainer(Trainer):
 
     def training_step(self, model, inputs, num_items_in_batch=None):
         """Override training step to include spin-up if needed."""
+        self.model.cpu()
         if self.current_step < self.spinup_steps and not hasattr(self, '_spinup_complete'):
             self.train_spinup(self.train_dataset)
             self._spinup_complete = True
-        
+        self.model.cuda()
         loss = super().training_step(model, inputs)
         self.current_step += 1
         return loss
