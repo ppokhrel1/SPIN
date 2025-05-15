@@ -119,13 +119,22 @@ def main():
     #####################
     # Apply chat template
     #####################
-    raw_datasets = raw_datasets.map(
-        apply_chat_template,
-        fn_kwargs={"tokenizer": tokenizer, "task": "spin"},
-        num_proc=data_args.preprocessing_num_workers,
-        remove_columns=column_names,
-        desc="Formatting comparisons with prompt template",
-    )
+    raw_datasets = {
+        split: dset.select(range(min(2000, dset.num_rows)))  # Avoid error if fewer than 2000 rows
+        for split, dset in raw_datasets.items()
+    }
+
+    raw_datasets = {
+        split: dset.map(
+            apply_chat_template,
+            fn_kwargs={"tokenizer": tokenizer, "task": "spin"},
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            desc=f"Formatting comparisons with prompt template for {split}",
+        )
+        for split, dset in raw_datasets.items()
+    }
+
 
     # Replace column names with what TRL needs, text_real -> real and text_generated -> generated
     for split in ["train", "test"]:
