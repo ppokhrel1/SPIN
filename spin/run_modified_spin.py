@@ -186,10 +186,13 @@ def main():
             per_device_train_batch_size=4,
             num_train_epochs=3,
             learning_rate=1e-5,
-            logging_steps=10
+            logging_steps=10,
+            remove_unused_columns=False,
         ),
         beta=0.1,
-        spinup_steps=500,
+        spinup_steps=2,
+        train_dataset=raw_datasets["train"],
+        eval_dataset=raw_datasets["test"],
         #scaling_rank=64
     )
 
