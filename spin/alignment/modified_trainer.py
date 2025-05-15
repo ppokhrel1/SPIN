@@ -106,7 +106,7 @@ class AdaptiveSPINModel(PreTrainedModel):
         self.register_buffer('current_scale', self.s0.clone())
         self.register_buffer('best_scale', self.s0.clone())
 
-    def forward(self, input_ids, attention_mask=None, output_hidden_states=False):
+    def forward(self, input_ids, attention_mask=None, output_hidden_states=False, return_dict=None):
         outputs = self.wrapped_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -132,7 +132,8 @@ class AdaptiveSPINModel(PreTrainedModel):
         return modeling_outputs.CausalLMOutputWithPast(
             logits=outputs.logits,
             past_key_values=outputs.past_key_values,
-            hidden_states=True,
+            hidden_states=outputs.hidden_states if output_hidden_states else None,
+            return_dict=return_dict if return_dict is not None else True,
         )
 
     def _update_scale(self, h, s_prior):
@@ -378,6 +379,7 @@ class AdaptiveSPINTrainer(Trainer):
                         input_ids      = input_ids,
                         attention_mask = attention_mask,
                         output_hidden_states = True,
+                        return_dict=True,
                     )
                 hs = outputs.hidden_states[-1]
                     
