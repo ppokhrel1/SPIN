@@ -172,6 +172,7 @@ def main():
     #    max_prompt_length=training_args.max_prompt_length,
     #    peft_config=get_peft_config(model_args),
     #)
+    model = model_args.model_name_or_path
     spin_trainer = AdaptiveSPINTrainer(
         model=model,
         args=TrainingArguments(
