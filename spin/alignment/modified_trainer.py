@@ -23,7 +23,7 @@ from transformers import (
 from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import EvalLoopOutput
 
-
+import torch.utils.checkpoint as checkpoint
 from transformers.utils import is_peft_available
 
 from trl.models import PreTrainedModelWrapper, create_reference_model
@@ -106,50 +106,35 @@ class AdaptiveSPINModel(PreTrainedModel):
         self.register_buffer('current_scale', self.s0.clone())
         self.register_buffer('best_scale', self.s0.clone())
 
-    def forward(
-        self,
-        input_ids,
-        attention_mask=None,
-        output_hidden_states=False,
-        return_dict=False,
-        **kwargs,
-    ):
-        # 1) Run the base LM so we get a real .hidden_states tuple
-        lm_outputs = self.wrapped_model(
+    def forward(self, input_ids, attention_mask=None, output_hidden_states=False,):
+        outputs = self.wrapped_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
-            output_hidden_states=True,    # always request hidden states
-            return_dict=True,             # always get a ModelOutput
-            **kwargs,
+            output_hidden_states=True
         )
-
-        # 2) Extract only the final hidden layer: shape [B, T, D]
-        hs = lm_outputs.hidden_states[-1]
-        B, T, D = hs.size()
-
-        # 3) Perform your time‑step adaptive scaling
-        s = self.current_scale.unsqueeze(0).expand(B, -1).to(hs.device)  # [B, D]
+        
+        hs = outputs.hidden_states[-1]
+        batch_size = hs.size(0)
+        s = self.current_scale.unsqueeze(0).expand(batch_size, -1).to(hs.device)
         scaled_states = []
-        for t in range(T):
-            h_t = hs[:, t, :]                    # [B, D]
-            scaled_states.append(h_t * s)        # [B, D]
-
-            if t < T - 1:
-                s_prior = self.transition_net(s, h_t)      # [B, D]
-                s = self._update_scale(h_t, s_prior)       # [B, D]
-
-        # 4) Update your running scale state
-        self.current_scale = s.mean(0).detach()  # [D]
-
-        # 5) Stack and compute final logits
-        stacked = torch.stack(scaled_states, dim=1)    # [B, T, D]
-        logits = self.wrapped_model.lm_head(stacked)   # [B, T, V]
-
-        # 6) Return a clean CausalLMOutputWithPast
+        
+        for t in range(hs.size(1)):
+            h_t = hs[:, t, :]
+            scaled_h = h_t * s
+            scaled_states.append(scaled_h)
+            
+            if t < hs.size(1) - 1:
+                s_prior = checkpoint.checkpoint(self.transition_net, s, h_t)
+                # update via adapter (also checkpointed)
+                delta  = checkpoint.checkpoint(self.adapter, h_t, s_prior)
+                s = s_prior + delta
+        
+        self.current_scale = s.mean(0).detach()
+        outputs.logits = self.wrapped_model.lm_head(torch.stack(scaled_states, dim=1))
         return modeling_outputs.CausalLMOutputWithPast(
-            logits=logits,
-            past_key_values=lm_outputs.past_key_values,
-            hidden_states=hs if output_hidden_states else None,
+            logits=outputs.logits,
+            past_key_values=outputs.past_key_values,
+            hidden_states=outputs.hidden_states if output_hidden_states else None,
         )
 
     def _update_scale(self, h, s_prior):
@@ -602,8 +587,6 @@ if __name__ == "__main__":
         scaling_rank=64
     )
     
-    # Load dataset here (implementation specific)
-    # train_dataset = ...
     
     # Start training
     trainer.train()
