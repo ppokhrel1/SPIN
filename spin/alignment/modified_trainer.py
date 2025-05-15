@@ -113,7 +113,8 @@ class AdaptiveSPINModel(PreTrainedModel):
             output_hidden_states=True
         )
         
-        hs = outputs.last_hidden_state
+        hs = outputs.hidden_states[-1]   
+        del outputs.hidden_states
         batch_size = hs.size(0)
         s = self.current_scale.unsqueeze(0).expand(batch_size, -1).to(hs.device)
         scaled_states = []
@@ -379,7 +380,8 @@ class AdaptiveSPINTrainer(Trainer):
                         attention_mask = attention_mask,
                         output_hidden_states = True,
                     )
-                    hs = outputs.last_hidden_state
+                    hs = outputs.hidden_states[-1]  
+                    del outputs.hidden_states
                 
                 # Process hidden states
                 device = self.model.s0.device
@@ -431,7 +433,8 @@ class AdaptiveSPINTrainer(Trainer):
             output_hidden_states=True
         )
         #input_embeds
-        hs = outputs.last_hidden_state
+        hs = outputs.hidden_states[-1]  
+        del outputs.hidden_states
         
         # Initialize scaling
         batch_size = hs.size(0)
