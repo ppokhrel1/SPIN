@@ -81,11 +81,15 @@ class StateVerifier(nn.Module):
         return self.net(states).squeeze(-1)
 
 class AdaptiveSPINModel(PreTrainedModel):
+    base_model_prefix = "wrapped_model"
     def __init__(self, base_model, config=None):
         if config is None:
             config = base_model.config
         super().__init__(config)
-        self.base_model = base_model
+        if isinstance(base_model, AdaptiveSPINModel):
+            self.wrapped_model = base_model.base_model  # Unwrap if nested
+        else:
+            self.wrapped_model = base_model
         self.dim = config.hidden_size
         
         # Scaling components
@@ -103,7 +107,7 @@ class AdaptiveSPINModel(PreTrainedModel):
         self.register_buffer('best_scale', self.s0.clone())
 
     def forward(self, input_ids, attention_mask=None, output_hidden_states=False):
-        outputs = self.base_model(
+        outputs = self.wrapped_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             output_hidden_states=True
@@ -124,7 +128,7 @@ class AdaptiveSPINModel(PreTrainedModel):
                 s = self._update_scale(h_t, s_prior)
         
         self.current_scale = s.mean(0).detach()
-        outputs.logits = self.base_model.lm_head(torch.stack(scaled_states, dim=1))
+        outputs.logits = self.wrapped_model.lm_head(torch.stack(scaled_states, dim=1))
         return modeling_outputs.CausalLMOutputWithPast(
             logits=outputs.logits,
             past_key_values=outputs.past_key_values,
@@ -142,16 +146,16 @@ class AdaptiveSPINModel(PreTrainedModel):
         candidates = []
         with torch.no_grad():
             for _ in range(K):
-                logits = self.base_model.lm_head(h * s_prior)
+                logits = self.wrapped_model.lm_head(h * s_prior)
                 next_id = torch.multinomial(F.softmax(logits, dim=-1), 1)
-                next_output = self.base_model(next_id, output_hidden_states=True)
+                next_output = self.wrapped_model(next_id, output_hidden_states=True)
                 next_h = next_output.hidden_states[-1][:, -1, :]
                 next_s = self.transition_net(s_prior, h)
                 candidates.append(next_s)
         return torch.stack(candidates)
 
     def save_pretrained(self, save_directory, **kwargs):
-        self.base_model.save_pretrained(save_directory)
+        self.wrapped_model.save_pretrained(save_directory)
         state = {
             'transition_net': self.transition_net.state_dict(),
             'adapter': self.adapter.state_dict(),
@@ -230,6 +234,7 @@ class AdaptiveSPINTrainer(Trainer):
         self.scaling_rank = scaling_rank
         self.model = model
         self.ref_model = ref_model
+        self.max_length = max_length
 
         # Training parameters
         self.beta = beta
@@ -248,7 +253,7 @@ class AdaptiveSPINTrainer(Trainer):
         # Initialize scaling components
         # self._setup_scaling_system()
         if model is not None:
-            self.is_encoder_decoder = self.model.base_model.config.is_encoder_decoder
+            self.is_encoder_decoder = self.model.wrapped_model.config.is_encoder_decoder
         else:
             self.is_encoder_decoder = is_encoder_decoder
 
@@ -324,9 +329,9 @@ class AdaptiveSPINTrainer(Trainer):
         
         from peft import PeftModel, prepare_model_for_kbit_training, get_peft_model
         
-        if isinstance(self.model.base_model, PeftModel):
+        if isinstance(self.model.wrapped_model, PeftModel):
             logger.info("Merging and unloading existing PEFT model")
-            self.model.base_model = self.model.base_model.merge_and_unload()
+            self.model.wrapped_model = self.model.wrapped_model.merge_and_unload()
         
         # Prepare for 4/8-bit training if needed
         if getattr(self.model, "is_loaded_in_8bit", False) or getattr(self.model, "is_loaded_in_4bit", False):
@@ -355,7 +360,7 @@ class AdaptiveSPINTrainer(Trainer):
             {'params': self.model.adapter.parameters(), 'lr': 1e-4}
         ])
         
-        self.model.base_model.eval()
+        self.model.wrapped_model.eval()
         self.model.transition_net.train()
         self.model.adapter.train()
         

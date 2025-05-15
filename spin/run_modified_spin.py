@@ -193,6 +193,10 @@ def main():
         spinup_steps=2,
         train_dataset=raw_datasets["train"],
         eval_dataset=raw_datasets["test"],
+        tokenizer=tokenizer,
+        max_length=training_args.max_length,
+        max_prompt_length=training_args.max_prompt_length,
+        peft_config=get_peft_config(model_args),
         #scaling_rank=64
     )
 
