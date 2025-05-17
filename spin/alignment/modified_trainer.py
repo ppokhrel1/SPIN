@@ -22,6 +22,7 @@ from transformers import (
 )
 from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import EvalLoopOutput
+import gc
 
 import torch.utils.checkpoint as checkpoint
 from transformers.utils import is_peft_available
@@ -29,6 +30,8 @@ from transformers.utils import is_peft_available
 from trl.models import PreTrainedModelWrapper, create_reference_model
 from trl.trainer.utils import disable_dropout_in_model, pad_to_length
 from transformers.integrations import is_mlflow_available, is_wandb_available
+import torch
+torch.cuda.empty_cache()
 
 
 
@@ -111,7 +114,7 @@ class AdaptiveSPINModel(PreTrainedModel):
             input_ids=input_ids,
             attention_mask=attention_mask,
             output_hidden_states=True,
-            return_dict=return_dict
+            #return_dict=return_dict
         )
         
         hs = outputs.hidden_states[-1]
@@ -423,7 +426,8 @@ class AdaptiveSPINTrainer(Trainer):
             
             if step % 100 == 0:
                 logger.info(f"Spin-up step {step}: loss={total_loss/len(dataset):.4f}")
-        
+        gc.collect()
+
         logger.info("Spin-up phase completed")
         self.current_scale = self.model.s0.clone()
         self.best_scale = self.model.s0.clone()
@@ -436,7 +440,7 @@ class AdaptiveSPINTrainer(Trainer):
             output_hidden_states=True
         )
         #input_embeds
-        #hs = outputs.hidden_states[-1]
+        hs = outputs.hidden_states[-1]
         
         # Initialize scaling
         batch_size = hs.size(0)
@@ -460,7 +464,7 @@ class AdaptiveSPINTrainer(Trainer):
         self.current_scale = s.mean(0).detach()
         
         # Compute final logits
-        outputs.logits = self.model.lm_head(torch.stack(scaled_states, dim=1))
+        outputs.logits = self.model.base_model.lm_head(torch.stack(scaled_states, dim=1))
         return outputs
 
     def _update_scale(self, h, s_prior):
@@ -470,14 +474,14 @@ class AdaptiveSPINTrainer(Trainer):
         
         # Score candidates
         with torch.no_grad():
-            scores = self.verifier(candidates)
+            scores = self.model.verifier(candidates)
         
         # Weighted combination
         y_obs = scores.softmax(-1).unsqueeze(-1) * candidates
         y_obs = y_obs.sum(dim=0)
         
         # Apply adapter
-        delta = self.adapter(h, s_prior)
+        delta = self.model.adapter(h, s_prior)
         return s_prior + delta
 
     def _generate_candidates(self, h, s_prior, K=None):
@@ -488,7 +492,7 @@ class AdaptiveSPINTrainer(Trainer):
         with torch.no_grad():
             for _ in range(K):
                 # Generate next token
-                logits = self.model.lm_head(h * s_prior)
+                logits = self.model.wrapped_model.lm_head(h * s_prior)
                 next_id = torch.multinomial(F.softmax(logits, dim=-1), 1)
                 
                 # Get next hidden state
@@ -504,24 +508,24 @@ class AdaptiveSPINTrainer(Trainer):
         
         return torch.stack(candidates)
 
-    def compute_loss(self, model, inputs, return_outputs=False):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         """Compute SPIN loss with adaptive scaling."""
         # Forward pass with scaling
         outputs = self.scaled_forward(
-            inputs["input_ids"],
-            attention_mask=inputs.get("attention_mask")
+            inputs["real_input_ids"],
+            attention_mask=inputs.get("real_attention_mask")
         )
         
         # Calculate policy and reference logps
-        policy_logps = self._get_logps(outputs.logits, inputs["labels"])
+        policy_logps = self._get_logps(outputs.logits, inputs["real_labels"])
         with torch.no_grad():
             ref_outputs = self.model(
-                input_ids=inputs["input_ids"],
-                attention_mask=inputs.get("attention_mask")
+                input_ids=inputs["real_input_ids"].long(),
+                attention_mask=inputs.get("real_attention_mask")
             )
-            ref_logps = self._get_logps(ref_outputs.logits, inputs["labels"])
+            ref_logps = self._get_logps(ref_outputs.logits, inputs["real_labels"])
         
-        # SPIN loss calculation
+        # SPIN l.long()oss calculation
         log_ratio = policy_logps - ref_logps
         if self.loss_type == "sigmoid":
             loss = -F.logsigmoid(self.beta * log_ratio).mean()
@@ -537,11 +541,14 @@ class AdaptiveSPINTrainer(Trainer):
             "log_ratio": log_ratio.mean().item()
         }
         self._log_metrics(metrics)
-        
+        gc.collect()
         return (loss, outputs) if return_outputs else loss
 
     def _get_logps(self, logits, labels):
-        """Get log probabilities for labels."""
+        # logits: [bsz, seq, vocab_size], labels: [bsz, seq]
+        labels = labels.long()
+        vocab_size = logits.size(-1)
+        labels = labels.clamp(0, vocab_size-1)
         logps = F.log_softmax(logits, dim=-1)
         return logps.gather(-1, labels.unsqueeze(-1)).squeeze(-1)
 
@@ -556,6 +563,7 @@ class AdaptiveSPINTrainer(Trainer):
                 for k, v in self._stored_metrics.items()
             }
             logger.info(f"Step {self.current_step}: {avg_metrics}")
+            
             self._stored_metrics.clear()
 
     def training_step(self, model, inputs, num_items_in_batch=None):
@@ -564,10 +572,11 @@ class AdaptiveSPINTrainer(Trainer):
             self.train_spinup(self.train_dataset)
             self._spinup_complete = True
 
-        if self.state.global_step % 20 == 0:
+        if self.state.global_step % 2 == 0:
             torch.cuda.empty_cache()
         
         loss = super().training_step(model, inputs)
+        gc.collect()
         self.current_step += 1
         return loss
 

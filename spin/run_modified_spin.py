@@ -120,7 +120,7 @@ def main():
     # Apply chat template
     #####################
     raw_datasets = {
-        split: dset.select(range(min(2000, dset.num_rows)))  # Avoid error if fewer than 2000 rows
+        split: dset.select(range(min(200, dset.num_rows)))  # Avoid error if fewer than 2000 rows
         for split, dset in raw_datasets.items()
     }
 
@@ -185,7 +185,7 @@ def main():
     #)
     model = model_args.model_name_or_path
     base_model = AutoModelForCausalLM.from_pretrained(model)
-    base_model.gradient_checkpointing_enable()
+    #base_model.gradient_checkpointing_enable()
 
     model = AdaptiveSPINModel(base_model)
 
@@ -194,10 +194,11 @@ def main():
         model=model,
         args=TrainingArguments(
             output_dir="./results",
-            per_device_train_batch_size=2,
+            per_device_train_batch_size=8,
             num_train_epochs=3,
             learning_rate=1e-5,
             logging_steps=10,
+            #ref_model_init_kwargs=ref_model_kwargs,
             remove_unused_columns=False,
             gradient_accumulation_steps=4,
             #gradient_checkpointing=True,
@@ -210,6 +211,8 @@ def main():
         max_length=training_args.max_length,
         max_prompt_length=training_args.max_prompt_length,
         peft_config=get_peft_config(model_args),
+        ref_model_init_kwargs=ref_model_kwargs,
+        model_init_kwargs=model_kwargs,
         #scaling_rank=64
     )
 
